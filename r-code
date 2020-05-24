@@ -1,0 +1,204 @@
+# CALLING LIBRARIES
+library(ggplot2)
+library(corrplot)
+library(missForest)
+library(naivebayes)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(class)
+
+
+# GETTING DATA
+DATA=read.csv(file.choose(),sep=",",header=TRUE)
+
+
+# DATA VIEWING
+str(DATA)
+summary(DATA)
+is.na(DATA)
+(DATA[!complete.cases(DATA),])
+cor(DATA)
+
+#checking for the range of people with respect to their age.
+AGE <- ifelse((DATA$Age>=21)&(DATA$Age<=30),"21-30",
+              ifelse((DATA$Age>=31)&(DATA$Age<=40),"31-40",
+                     ifelse((DATA$Age>=41)&(DATA$Age<=50),"41-50",
+                            ifelse((DATA$Age>=51)&(DATA$Age<=60),"51-60",
+                                   ">61"))))
+
+
+table(AGE)
+
+#Visualization
+
+ggplot(aes(x=Age), data=DATA)+
+  geom_histogram(binwidth = 1.5,color='darkred',fill="Red")+
+  scale_x_continuous(limits = c(20,85),breaks = seq(20,80,5))+
+  xlab("age")+
+  ylab("no of people")
+
+#count
+
+ggplot(aes(x=AGE),data = DATA)+
+  geom_bar(fill='green')
+
+#Correlation Matrix
+data_cor=round(cor(DATA[,-9]),1)
+data_cor
+corrplot(cor(data_cor),method = "number",type = "lower")
+
+
+# DATA CLEANING AND PREPARATION
+str(DATA)
+DATA$Outcome[DATA$Outcome == 0] <- 'No'
+DATA$Outcome[DATA$Outcome == 1] <- 'Yes'
+DATA$Outcome <- factor(DATA$Outcome)
+DATACLEANED=DATA
+summary(DATACLEANED)
+
+# IMPUTING OUTLIERS AND FEEDING NAs TO THEM
+
+OUTLIERS=NULL
+for (i in 1:ncol(DATACLEANED))
+{
+  if(class(DATACLEANED[,i])=='numeric'||class(DATACLEANED[,i])=='integer')
+  {
+    if (length((boxplot(DATACLEANED[,i])$out))==0)
+    {
+      print ('NO OUTLIERS')
+    }else {
+      print ('OUTLIERS')
+      OUTLIERS=boxplot(DATACLEANED[,i], plot=FALSE)$out
+      DATACLEANED[which(DATACLEANED[,i] %in% OUTLIERS),i]=NA
+      OUTLIERS=NULL
+    }
+  }else{
+    print ("NOT NUMERIC")
+  }
+}
+summary(DATACLEANED)
+DATANOOUTLIER=DATACLEANED  
+
+# REMOVING NA
+if (nrow(DATACLEANED[!complete.cases(DATACLEANED),])==0)
+{
+  DATANONA=DATACLEANED
+}else{
+  DATAMISSFOREST <- missForest(DATACLEANED)
+  DATANONA=as.data.frame(DATAMISSFOREST[[1]])
+}
+
+summary(DATANONA)
+
+# DATA SUBSETTING AND PREPARATION
+set.seed(1234)
+ind <- sample(2, nrow(DATANONA), replace = T, prob = c(0.7, 0.3))
+TRAINING<- DATANONA[ind == 1,]
+TESTING<- DATANONA[ind == 2,]
+
+
+# CREATING NAIVE BAYES MODEL
+
+ACCURACY_NAIVE=naive_bayes(Outcome~.,data=TRAINING)
+plot(ACCURACY_NAIVE)
+PREDICTIONPROB=predict(ACCURACY_NAIVE,TESTING,type="prob")
+head(cbind(PREDICTIONPROB,TESTING))
+
+# PREDICTION
+PREDICTION=predict(ACCURACY_NAIVE,TESTING)
+
+# CROSS VALIDATION
+(VALIDATION=table(TEST=TESTING$Outcome,PREDICTED=PREDICTION))
+
+# CHECKING ACCURACY PERCENTAGE
+(ACCURACY=sum(diag(VALIDATION))/sum(VALIDATION)*100)
+
+
+# CREATING DECISION TREE MODEL
+DECISIONTREE_MODEL=rpart(Outcome~.,data=TRAINING,method = "class")
+plot(DECISIONTREE_MODEL)
+text(DECISIONTREE_MODEL)
+rpart.plot(DECISIONTREE_MODEL)
+rpart.plot(DECISIONTREE_MODEL,type=4, extra=101)
+PREDICTIONPROB=predict(DECISIONTREE_MODEL,TESTING,type="class")
+head(cbind(PREDICTIONPROB,TESTING))
+tail(cbind(PREDICTIONPROB,TESTING))
+
+
+# PREDICTION
+PREDICTION=predict(DECISIONTREE_MODEL,TESTING,type="class")
+
+# CROSS VALIDATION
+(VALIDATION=table(TEST=TESTING$Outcome,PREDICTED=PREDICTION))
+
+# CHECKING ACCURACY PERCENTAGE
+(ACCURACY_DTREE=sum(diag(VALIDATION))/sum(VALIDATION)*100)
+
+
+
+#CREATING KNN MODEL
+
+TRAINING_LABEL=TRAINING[,1]
+TESTING_LABEL=TESTING[,1]
+
+TRAINING=TRAINING[,-1]
+TESTING=TESTING[,-1]
+
+ncol(TRAINING)
+ncol(TESTING)
+
+
+NEARESTNEIGHBOUR=round(sqrt(nrow(DATANONA)))
+print(NEARESTNEIGHBOUR)
+plot(NEARESTNEIGHBOUR)
+df=NULL
+for (i in 1:NEARESTNEIGHBOUR)
+{
+  PREDICTION=knn(train=TRAINING,test=TESTING,cl=TRAINING_LABEL,k=1)
+  VALIDATION=table(TESTING_LABEL,PREDICTION)
+  (ACCURACY=sum(diag(VALIDATION))/sum(VALIDATION)*100)
+  print(paste("When Nearest neighbour= ",i,"Then Accuracy = ",ACCURACY))
+  df=rbind(df,data.frame(K=i,Acc=ACCURACY))
+}
+
+# SELECTING BEST VALUE OF K
+MAXK=subset(df,Acc==max(Acc),select=K)
+MAXK
+
+if (length(MAXK$K)>1)
+{
+  for (i in 1:length(MAXK$K))
+  {
+    if(MAXK[i,] %% 2==1){
+      K=MAXK[i,]
+      break
+    }else{
+      K=MAXK[1,]
+    }
+  }
+}else{
+  K=MAXK
+}
+print(K)
+# FIXED MODEL
+PREDICTION=knn(train=TRAINING,test=TESTING,cl=TRAINING_LABEL,k=MAXK)
+
+# CROSS VALIDATION
+(VALIDATION=table(TESTING_LABEL,PREDICTION))
+
+# CHECKING ACCURACY PERCENTAGE
+(ACCURACY=sum(diag(VALIDATION))/sum(VALIDATION)*100)
+
+
+#svm
+qplot(DATANONA$Age,DATANONA$Outcome,data=DATANONA,color=DATANONA$Outcome)
+SVMMODELENT=svm(Outcome~.,data=DATANONA)
+summary(SVMMODELENT)
+SVMPREDICTIONENT=predict(SVMMODELENT,DATANONA)
+(Tab=table(SVMPREDICTIONENT,DATANONA$Outcome))
+
+(SVMPERFORMANCE=sum(diag(Tab))/sum(Tab)*100)
+SVMPREDICTION=predict(SVMMODEL,diab)
+
+
